@@ -105,3 +105,7 @@ html
           = link_to "#", class: "md-close js-deny"
             = render "application/icon_x"
       .md-overlay
+
+    - if flash[:modal_partial]
+      script#js-open-modal-on-load type="text/html"
+        = render "modal_partials/#{flash[:modal_partial]}"
