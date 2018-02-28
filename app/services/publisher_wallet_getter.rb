@@ -8,20 +8,46 @@ class PublisherWalletGetter < BaseApiClient
     @publisher = publisher
   end
 
+  def connection
+    @connection ||= begin
+      require "faraday"
+      require 'typhoeus/adapters/faraday'
+      Faraday.new(url: api_base_uri) do |faraday|
+        faraday.adapter :typhoeus
+        faraday.proxy(proxy_url) if proxy_url.present?
+        # Log level info: Brief summaries
+        # Log level debug: Detailed bodies and headers
+        faraday.response(:logger, Rails.logger, bodies: true, headers: true)
+        faraday.use(Faraday::Response::RaiseError)
+      end
+    end
+  end
+
   def perform
     return perform_offline if Rails.application.secrets[:api_eyeshade_offline]
 
-    wallet_response = connection.get do |request|
-      request.headers["Authorization"] = api_authorization_header
-      request.url("/v1/owners/#{URI.escape(publisher.owner_identifier)}/wallet")
+    wallet_response = nil
+    channel_responses = {}
+
+    connection.in_parallel do
+      wallet_response = connection.get do |request|
+        request.headers["Authorization"] = api_authorization_header
+        request.url("/v1/owners/#{URI.escape(publisher.owner_identifier)}/wallet")
+      end
+
+      publisher.channels.each do |channel|
+        identifier =  channel.details.channel_identifier
+        channel_responses[identifier] = connection.get do |request|
+          request.headers["Authorization"] = api_authorization_header
+          request.url("/v2/publishers/#{URI.escape(identifier)}/balance")
+        end
+      end
     end
 
-    channel_responses = {}
-    publisher.channels.each do |channel|
-      identifier =  channel.details.channel_identifier
-      channel_responses[identifier] = connection.get do |request|
-        request.headers["Authorization"] = api_authorization_header
-        request.url("/v2/publishers/#{URI.escape(identifier)}/balance")
+    [wallet_response, *(channel_responses.map {|_,v| v})].each do |response|
+      unless response.success?
+        Rails.logger.warn("PublisherWalletGetter #perform error: #{response.env[:typhoeus_return_message]}")
+        return nil
       end
     end
 
@@ -36,9 +62,6 @@ class PublisherWalletGetter < BaseApiClient
       wallet_json: wallet_hash,
       channel_json: channel_hash
     )
-  rescue Faraday::Error => e
-    Rails.logger.warn("PublisherWalletGetter #perform error: #{e}")
-    nil
   end
 
   def perform_offline

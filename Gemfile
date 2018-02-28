@@ -20,6 +20,7 @@ gem "email_validator", "~> 1.6"
 
 # HTTP library wrapper
 gem "faraday", "~> 0.9.2", require: false
+gem "typhoeus", require: false
 
 # Make logs less mad verbose
 gem "lograge", "~> 0.4"
